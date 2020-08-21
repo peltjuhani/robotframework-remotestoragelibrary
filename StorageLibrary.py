@@ -2,10 +2,13 @@ import sqlite3 as sl
 import json
 
 class StorageLibrary:
+    ROBOT_LIBRARY_SCOPE = 'GLOBAL'
+    ROBOT_SUPPRESS_NAME = True
+
     global cur
     cur = None
     global maxValueDates
-    maxValueDates = 3;
+    maxValueDates = 365;
     
     def __init__(self):
         global cur
@@ -34,13 +37,26 @@ class StorageLibrary:
             print("Database created")
         else:
             print("Connected to existing database")
+        #self.store("myvar","blaaad","myset","myid")
+        #self.store("myvar","blaaad3")
+        #print(self.retrieve_latest("myvar","myset","myid"))
+        #print(self.retrieve_latest(testSet="myset",variableName="myvar"))
+        #print(self.retrieve_latest("myvar"))
         
 
-    def store(self,variableName,testSet,testId,data):
-            # Note here will need to check the maximums allowed for "variableName+testSet+testId" to prevent flooding  without changing index
+    def store(self,variableName,data,testSetIN=None,testIdIN=None):
+            robot_name = 'store to remote'
+            # Note here will need to check the maximums allowed for "variableName+testSet+testId" to prevent flooding - e.g. by test reruns
             global cur
+            testSet = testSetIN
+            if testSetIN is None:
+                testSet = ""
+            testId = testIdIN
+            if testIdIN is None:
+                testId = ""
+                
+            serializedData = json.dumps(data, sort_keys=True, indent=4)            
             
-            serializedData = json.dumps(data, sort_keys=True, indent=4)
             query = "INSERT INTO REMOTEDATA(testDate,variableName,testSet,testId,Content) \
                     VALUES(strftime('%s','now'),?,?,?,?);"
             args = (variableName,testSet,testId,serializedData)            
@@ -48,19 +64,18 @@ class StorageLibrary:
                 cur.execute(query,args)
                 cur.connection.commit()
             except sl.IntegrityError:
-                raise Exception("Record with the given parameters ("+variableName+","+testSet+","+testId+") already exists in storage")
-            count = self.retrieveCount(variableName,testSet,testId);
+                raise Exception("Record with the given parameters ("+variableName+","+testSet+","+testId+") already exists in storage for current timestamp")
+            count = self.retrieve_count(variableName,testSet,testId);
             if (count > maxValueDates):
-                    self.RemoveXLatest(variableName,testSet,testId,count-maxValueDates)
+                    self.remove_X_Latest(variableName,testSet,testId,count-maxValueDates)
 
-    def RemoveXLatest(self,variableName,testSet,testId,count):
+    def remove_X_Latest(self,variableName,testSet,testId,count):
             query = "DELETE FROM REMOTEDATA WHERE id in (SELECT id FROM REMOTEDATA WHERE variableName = ? AND testSet = ? AND testId = ? ORDER BY testDate ASC LIMIT ?);"
             args = (variableName,testSet,testId,count)
             cur.execute(query,args)
             cur.connection.commit()
 
-
-    def retrieveCount(self,variableName,testSet,testId):
+    def retrieve_count(self,variableName,testSet,testId):
             global cur
             query = "SELECT count(*) FROM REMOTEDATA WHERE variableName = ? AND testSet = ? AND testId = ?"
             args = (variableName,testSet,testId)
@@ -68,48 +83,42 @@ class StorageLibrary:
             counts = cur.fetchone()
             return(counts[0])
 
-            
-    def retrieveLatest(self,variableName,testSet=None,testId=None):
+    def retrieve_latest(self,variableName,testSet=None,testId=None,after=None,before=None):
+            robot_name = 'get latest value for remote variable'
             global cur
-            args = None
-            query = None
             if variableName is None:
                 raise Exception("Variable name was missing, it is a mandatory argument")
-            if testSet is not None and testId is not None:
-                query = "SELECT content FROM REMOTEDATA WHERE variableName = ? AND testSet = ? AND testId = ? AND testDate = (SELECT MAX(testDate) FROM REMOTEDATA)"
-                args = (variableName,testSet,testId)
-                cur.execute(query,args)
-            if testSet is None and testId is None:
-                query = "SELECT content FROM REMOTEDATA WHERE variableName = ? AND testDate = (SELECT MAX(testDate) FROM REMOTEDATA)"
-                args = (variableName)
-                cur.execute(query,[args])
-            if testSet is None and testId is not None:
-                query = "SELECT content FROM REMOTEDATA WHERE variableName = ? AND testId = ? AND testDate = (SELECT MAX(testDate) FROM REMOTEDATA)"
-                args = (variableName,testId)
-                cur.execute(query,args)
-            if testSet is not None and testId is None:
-                query = "SELECT content FROM REMOTEDATA WHERE variableName = ? AND testSet = ? AND testDate = (SELECT MAX(testDate) FROM REMOTEDATA)"
-                args = (variableName,testSet)
-                cur.execute(query,args)
+
+            # query based on variableName and optional testSet and testId
+            args = [variableName]
+            query = "SELECT content FROM REMOTEDATA WHERE variableName = ? "
+            if testSet is not None:
+                query = query + "AND testSet = ? "
+                args.append(testSet)
+            if testId is not None:
+                query = query + "AND testId = ? "
+                args.append(testId)
+            
+            # date range to use
+            query = query + "AND testDate = (SELECT MAX(testDate) FROM REMOTEDATA WHERE 1=1 "             
+            if after is not None:
+                query = query + "testDate > ? "
+                args.append(after)
+            if after is not None and before is not None:
+                query = query + "AND "
+            if before is not None:
+                query = query + "testDate < ? "
+                args.append(before)
+            # add the where conditions to the date select
+            if testSet is not None:
+                query = query + "AND testSet = ? "
+                args.append(testSet)
+            if testId is not None:
+                query = query + "AND testId = ? "
+                args.append(testId)
+                
+            query = query + ");"
+            cur.execute(query,tuple(args))
             rows = cur.fetchall()
             data = json.loads(rows[0][0])
             return(data)
-
-    def retrieveLatestAfter(self,variableName,testSet,testId,timestamp):
-            global cur
-            query = "SELECT content FROM REMOTEDATA WHERE variableName = ? AND testSet = ? AND testId = ? AND testDate > ?"
-            args = (variableName,testSet,testId,timestamp)
-            cur.execute(query,args)
-            rows = cur.fetchall()
-            data = json.loads(rows[0][0])
-            return(data)
-
-    def retrieveLatestBefore(self,variableName,testSet,testId,timestamp):
-            global cur
-            query = "SELECT content FROM REMOTEDATA WHERE variableName = ? AND testSet = ? AND testId = ? AND testDate testDate = (SELECT MAX(testDate) FROM REMOTEDATA WHERE testDate < ?)"
-            args = (variableName,testSet,testId,timestamp)
-            cur.execute(query,args)
-            rows = cur.fetchall()
-            data = json.loads(rows[0][0])
-            return(data)
-
