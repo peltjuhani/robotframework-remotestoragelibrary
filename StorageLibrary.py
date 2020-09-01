@@ -6,13 +6,28 @@ from datetime import timezone
 
 
 class StorageLibrary:
-    """(Remote)storagelibrary is for storing variable values using robotframework remote library interface. Can be used for connecting separate test suites or runs by different teams.
+    """RemoteStorage library is for storing variable values using robotframework remote library interface. It can be used e.g. for connecting separate test suites or runs by different teams.
+
+    Installing:
+    First install robotremoteserver as described in (https://pypi.org/project/robotremoteserver/ ), e.g.:  pip install robotremoteserver
     
-    Note that although StorageLibrary can be used locally, and you could import it directly as StorageLibrary.py it is not intended for such usage. Instead it should be runnin separately as a remote library.
+    Then install robotframework-remotestoragelibrary:  
+    (at minimum download the robotframework-remotestoragelibrary.py and StorageLibrary.py)
+    
+    Running:
+    python robotframework-remotestoragelibrary.py
+    
+    See also "python robotframework-remotestoragelibrary.py --help" for options on running.
+    
+    Importing:
+    Library           Remote  http://<serverIPaddress>:8270
+    
+    Note that although the library could be imported locally as StorageLibrary.py the benefits come when running as a remote library.
     """
     ROBOT_LIBRARY_SCOPE = 'GLOBAL'
     ROBOT_SUPPRESS_NAME = True
     ROBOT_AUTO_KEYWORDS = False
+    ROBOT_LIBRARY_VERSION  = '0.1'
 
     global cur
     cur = None
@@ -138,6 +153,64 @@ class StorageLibrary:
             return(counts[0])
 
     def retrieve_latest(self,variable_name,environment=None,test_set=None,test_id=None,after=None,before=None,fail_if_not_found=False):
+            """Retrieves the given variable from remote storage and returns it as a robot framework variable. 
+                        
+            Arguments:
+            
+            variable_name:  name to use when storing the variable (mandatory)
+                        
+            environment:  name of the test environment (optional)
+            
+            test_set:  name of the test set, e.g. "E2E tests" (optional)
+            
+            test_id:  name of the test, e.g. "E2E test1" (optional)
+            
+            before:  the timestamp before the variable was stored (optional)
+            
+            after:  the timestamp after the variable was stored (optional)
+            
+            fail_if_not_found: defaults to ${False}, and then returns $[EMPTY} if variable is not found. If ${True} is given then will FAIL the keyword instead.
+            
+            before:    Epoch timestamp before which the variable was stored
+            
+            after:    Epoch timestamp after which the variable was stored
+            
+                                            
+            NOTE: The timestamp is the epoch timestamp returned with "${timestamp}=   Get Current Date   result_format=epoch"
+            
+            ( "Get Current Date" keyword is defined in Robot Framework DateTime standard library. )
+
+
+            Examples:
+            
+            ${myVar} =  |  Get Remote Variable  |  TheVariableName
+            
+            -- This retrieves the latest stored variable with name TheVariableName for any environment, testset etc. values
+            
+            ${myVar} =  |  Get Remote Variable  |  TheVariableName | fail_if_not_found=${True}
+            
+            -- This retrieves the latest stored variable with name TheVariableName for any environment, testset etc. values. If no variable is found then the keyword will fail
+
+            ${myVar} =  |  Get Remote Variable  |  TheVariableName | environment=TEST  | test_set=E2E  | test_id=E2E test 1 
+            
+            -- This retrieves the latest stored variable with name TheVariableName for "TEST" environment and test set "E2E", and test id "E2E test 1" 
+            
+            ${dayAgo}=  |  Get Current Date |  increment=-1 day  |  result_format=epoch
+            
+            ${myVar} =  |  Get Remote Variable  |  TheVariableName | test_id=E2E test 1 | before=${dayAgo}
+            
+            -- This retrieves the latest stored variable with name TheVariableName and test id "E2E test 1" that was stored at least one day ago.
+            
+            ${dayAgo}=  |  Get Current Date |  increment=-1 day  |  result_format=epoch
+            
+            ${weekAgo}=  |  Get Current Date |  increment=-7 days  |  result_format=epoch
+            
+            ${myVar} =  |  Get Remote Variable  |  TheVariableName | test_id=E2E test 1 | before=${dayAgo} | after=${weekAgo}
+            
+            -- This retrieves the latest stored variable with name TheVariableName and test id "E2E test 1" that was stored between 1 and 7 days earlier
+            
+            
+            """    
             global cur
             if variable_name is None:
                 raise Exception("Variable name was missing, it is a mandatory argument")

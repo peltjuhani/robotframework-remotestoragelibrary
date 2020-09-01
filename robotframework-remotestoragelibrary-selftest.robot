@@ -1,9 +1,13 @@
 *** Settings ***
 Documentation     Self tests for the remote storage library
-...
+...               Running the tests: 
+...                   1 Install robot framework ( pip install robotframework )
+...                   2 Start remotelibrary ( python robotframework-remotestoragelibrary.py )
+...                   3 Run robot tests ( python -m robot robotframework-remotestoragelibrary-selftest.robot )
 
 Library           Remote  http://127.0.0.1:8270
 Library           DateTime
+Library           OperatingSystem
 
 *** Test Cases ***
 
@@ -63,6 +67,7 @@ Set and get using timestamp
     ${timestamp3}=   Get Current Date   result_format=epoch
     Set Remote Variable   myvarTimestamp   data=timetest3  environment=myenv   test_set=myset   test_id=myid
     ${timestamp4}=   Get Current Date   result_format=epoch
+    ${longAgo}=      Get Current Date   increment=-5700 days   result_format=epoch
     
     Comment  Getting without time arguments should return latest value    
     ${var}=  Get Remote Variable   myvarTimestamp
@@ -91,3 +96,16 @@ Set and get using timestamp
     Should be Equal  ${var}  timetest3
     ${var}=  Get Remote Variable   myvarTimestamp   after=${timestamp1}  before=${timestamp4}
     Should be Equal  ${var}  timetest3
+    
+    ${var}=  Get Remote Variable   myvarTimestamp   before=${longAgo}
+    Should be Equal  ${var}  ${EMPTY}
+    
+
+Get non-existing
+    # empty response bt default
+    ${var}=  Get Remote Variable   myvarNoExist
+    Should be Equal  ${var}  ${EMPTY}
+    
+    # failure if requested to fail on not found
+    Run Keyword And Expect Error  	Variable with the given parameters was not found    Get Remote Variable   myvarNoExist   fail_if_not_found=${True}
+
