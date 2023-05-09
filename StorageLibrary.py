@@ -6,7 +6,7 @@ from datetime import timezone
 
 
 class StorageLibrary:
-    """RemoteStorage library is for storing variable values using robotframework remote library interface. It can be used e.g. for connecting separate test suites or runs by different teams.
+    """(Remote)Storage library is for storing variable values using robotframework remote library interface. It can be used e.g. for connecting separate test suites or runs by different teams.
 
     Installing:
     First install robotremoteserver as described in (https://pypi.org/project/robotremoteserver/ ), e.g.:  pip install robotremoteserver
@@ -51,20 +51,16 @@ class StorageLibrary:
                 CREATE TABLE REMOTEDATA (
                     id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
                     variableName TEXT,
-                    environment TEXT,
-                    testSet TEXT,
-                    testId TEXT,
-                    testDate REAL,
+                    identifierName TEXT,
+                    dataDate REAL,
                     Content TEXT,
-                    UNIQUE(variableName,testSet,testId,testDate)
+                    UNIQUE(variableName,identifierName,dataDate)
                 );
             ''')
             print("Creating indexes")
             cur.execute('''CREATE INDEX variableName_idx ON REMOTEDATA(variableName);''')
-            cur.execute('''CREATE INDEX environment_idx ON REMOTEDATA(environment);''')
-            cur.execute('''CREATE INDEX testSet_idx ON REMOTEDATA(testSet);''')
-            cur.execute('''CREATE INDEX testId_idx ON REMOTEDATA(testId);''')
-            cur.execute('''CREATE INDEX testDate_idx ON REMOTEDATA(testDate);''')
+            cur.execute('''CREATE INDEX identifier_idx ON REMOTEDATA(identifierName);''')
+            cur.execute('''CREATE INDEX dataDate_idx ON REMOTEDATA(dataDate);''')
             
             cur.connection.commit()
             print("Database created")
@@ -72,142 +68,121 @@ class StorageLibrary:
             print("Connected to existing database")
         
 
-    def store(self,variable_name,data,environment=None,test_set=None,test_id=None):
+    def store(self,variable_name,data,identifier_name=None):
             """Stores the given variable to a SQLITE database as a json serialized string. 
             
             The variable values are stored with timestamps. 
-            At most 365 versions are retained for same combination of variable_name,environment,test_set and test_id.
+            At most 365 versions are retained for same combination of variable_name and (optional) identifier.
             When more than 356 versions are stored the oldest value is removed from storage.
             
             Arguments:
             
             variable_name:  name to use when storing the variable (mandatory)
             
+            identifier_name:  additional identifier, e.g. environment name (optional)                        
+
             data:  either a String, Integer, Number, List or Dictionary. (mandatory)
             
-            environment:  name of the test environment (optional)
-            
-            test_set:  name of the test set, e.g. "E2E tests" (optional)
-            
-            test_id:  name of the test, e.g. "E2E test1" (optional)
-            
-
             Examples:
             
-            Set Remote Variable  |  InventedVariableName  |  ${My variable} 
+            Set Stored Variable  |  InventedVariableName  |  ${My variable} 
             
-            Set Remote Variable  |  data=${My variable} | variable_name=My variable Name  | environment=TEST
-            
-            Set Remote Variable  |  variable_name=My variable Name  |  environment=TEST  | test_set=E2E  | test_id=E2E test 1  | data=${My variable}
-            
+            Set Stored Variable  |  data=${My variable} | variable_name=My variable Name  | identifier_name=TST_ENV
+                        
 
-            The variable values are stored with timestamps. At most 365 versions are retained for same combination of variable_name,environment,test_set and test_id, when more than 356 versions are stored the oldest value is removed.
+            The variable values are stored with timestamps. At most 365 versions are retained for same combination of variable_name and identifier_name. When more than 356 versions are stored the oldest value is removed.
             """
-            # Note here will need to check the maximums allowed for "variableName+testSet+testId" to prevent flooding - e.g. by test reruns
             global cur
             if variable_name is None:
                 raise Exception("Variable name was missing, it is a mandatory argument")
-            environment_name = environment
-            testSet = test_set
-            testId = test_id
-            if testSet is None:
-                testSet = ""
-            if testId is None:
-                testId = ""
-            if environment_name is None:
-                environment_name = ""
+            if not identifier_name:
+                identifier_name = ""
             serializedData = json.dumps(data, sort_keys=True, indent=4)            
-            query = "INSERT INTO REMOTEDATA(testDate,variableName,environment,testSet,testId,Content) \
-                    VALUES(?,?,?,?,?,?);"
-            args = (datetime.now(timezone.utc).timestamp(),variable_name,environment_name,testSet,testId,serializedData)            
+            query = "INSERT INTO REMOTEDATA(dataDate,variableName,identifierName,Content) \
+                    VALUES(?,?,?,?);"
+            args = (datetime.now(timezone.utc).timestamp(),variable_name,identifier_name,serializedData)            
             try:
                 cur.execute(query,args)
                 cur.connection.commit()
             except sl.IntegrityError:
                 time.sleep(0.05)
-                query = "INSERT INTO REMOTEDATA(testDate,variableName,environment,testSet,testId,Content) \
-                        VALUES(?,?,?,?,?,?);"
-                args = (datetime.now(timezone.utc).timestamp(),variable_name,environment_name,testSet,testId,serializedData)            
+                query = "INSERT INTO REMOTEDATA(dataDate,variableName,identifierName,Content) \
+                        VALUES(?,?,?,?);"
+                args = (datetime.now(timezone.utc).timestamp(),variable_name,identifier_name,serializedData)            
                 try:
                     cur.execute(query,args)
                     cur.connection.commit()
                 except sl.IntegrityError:
-                    raise Exception("Record with the given parameters ("+str(variable_name)+","+str(environment_name)+","+str(testSet)+","+str(testId)+") already exists in storage for current timestamp")
+                    raise Exception("Record with the given parameters ("+str(variable_name)+","+str(identifier_name)+") already exists in storage for current timestamp")
                 
-            count = self.retrieve_count(variable_name,environment,testSet,testId);
+            count = self.retrieve_count(variable_name,identifier_name);
             if (count > maxValueDates):
-                    self.remove_X_Latest(variableName,testSet,testId,count-maxValueDates)
+                    self.remove_X_Latest(variable_name,identifier_name,count-maxValueDates)
 
-    def remove_X_Latest(self,variableName,environment,testSet,testId,count):
-            query = "DELETE FROM REMOTEDATA WHERE id in (SELECT id FROM REMOTEDATA WHERE variableName = ? AND environment= ? AND testSet = ? AND testId = ? ORDER BY testDate ASC LIMIT ?);"
-            args = (variableName,environment,testSet,testId,count)
+    def remove_X_Latest(self,variable_name,identifier_name,count):
+            query = "DELETE FROM REMOTEDATA WHERE id in (SELECT id FROM REMOTEDATA WHERE variableName = ? AND identifierName= ? ORDER BY dataDate ASC LIMIT ?);"
+            args = (variable_name,identifier_name,count)
             cur.execute(query,args)
             cur.connection.commit()
 
-    def retrieve_count(self,variableName,environment,testSet,testId):
+    def retrieve_count(self,variable_name,identifier_name):
             global cur
-            query = "SELECT count(*) FROM REMOTEDATA WHERE variableName = ? AND environment = ? AND testSet = ? AND testId = ?"
-            args = (variableName,environment,testSet,testId)
+            query = "SELECT count(*) FROM REMOTEDATA WHERE variableName = ? AND identifierName = ?"
+            args = (variable_name,identifier_name)
             cur.execute(query,args)
             counts = cur.fetchone()
             return(counts[0])
 
-    def retrieve_latest(self,variable_name,environment=None,test_set=None,test_id=None,after=None,before=None,fail_if_not_found=False):
+    def storagetimestamp(self):
+            """Utility function to retrieve the current timestamp in the storage server"""
+            return(datetime.now(timezone.utc).timestamp())
+
+    def retrieve_latest(self,variable_name,identifier_name=None,after=None,before=None,fail_if_not_found=False):
             """Retrieves the given variable from remote storage and returns it as a robot framework variable. 
                         
             Arguments:
             
             variable_name:  name to use when storing the variable (mandatory)
                         
-            environment:  name of the test environment (optional)
+            identifier_name:  additional identifier, e.g. environment name (optional)
             
-            test_set:  name of the test set, e.g. "E2E tests" (optional)
+            before:   Epoch timestamp at or before which the variable was stored (including the given timestamp)
             
-            test_id:  name of the test, e.g. "E2E test1" (optional)
-            
-            before:  the timestamp before the variable was stored (optional)
-            
-            after:  the timestamp after the variable was stored (optional)
+            after:    Epoch timestamp at or after which the variable was stored (including the given timestamp)
             
             fail_if_not_found: defaults to ${False}, and then returns $[EMPTY} if variable is not found. If ${True} is given then will FAIL the keyword instead.
             
-            before:    Epoch timestamp before which the variable was stored
-            
-            after:    Epoch timestamp after which the variable was stored
-            
-                                            
             NOTE: The timestamp is the epoch timestamp returned with "${timestamp}=   Get Current Date   result_format=epoch"
             
             ( "Get Current Date" keyword is defined in Robot Framework DateTime standard library. )
 
-
             Examples:
             
-            ${myVar} =  |  Get Remote Variable  |  TheVariableName
+            ${TheVariableName} =  |  Get Stored Variable  |  TheVariableName
             
-            -- This retrieves the latest stored variable with name TheVariableName for any environment, testset etc. values
+            -- This retrieves the latest stored variable with name TheVariableName regardless of additional identifier values
             
-            ${myVar} =  |  Get Remote Variable  |  TheVariableName | fail_if_not_found=${True}
+            ${TheVariableName} =  |  Get Stored Variable  |  TheVariableName | fail_if_not_found=${True}
             
-            -- This retrieves the latest stored variable with name TheVariableName for any environment, testset etc. values. If no variable is found then the keyword will fail
+            -- This retrieves the latest stored variable with name TheVariableName regardless of additional identifier values. If no variable is found then the keyword will fail
 
-            ${myVar} =  |  Get Remote Variable  |  TheVariableName | environment=TEST  | test_set=E2E  | test_id=E2E test 1 
+            ${TheVariableName} =  |  Get Stored Variable  |  TheVariableName | identifier_name=DEV_ENV
             
-            -- This retrieves the latest stored variable with name TheVariableName for "TEST" environment and test set "E2E", and test id "E2E test 1" 
+            -- This retrieves the latest stored variable with name TheVariableName having additional identifier "DEV_ENV"
             
             ${dayAgo}=  |  Get Current Date |  increment=-1 day  |  result_format=epoch
             
-            ${myVar} =  |  Get Remote Variable  |  TheVariableName | test_id=E2E test 1 | before=${dayAgo}
+            ${myVar} =  |  Get Stored Variable  |  TheVariableName | identifier_name=E2E test 1 | before=${dayAgo}
             
-            -- This retrieves the latest stored variable with name TheVariableName and test id "E2E test 1" that was stored at least one day ago.
+            -- This retrieves the latest stored variable with name TheVariableName and additional identifier "E2E test 1" that was stored at least one day ago.
             
             ${dayAgo}=  |  Get Current Date |  increment=-1 day  |  result_format=epoch
             
             ${weekAgo}=  |  Get Current Date |  increment=-7 days  |  result_format=epoch
             
-            ${myVar} =  |  Get Remote Variable  |  TheVariableName | test_id=E2E test 1 | before=${dayAgo} | after=${weekAgo}
+            ${myVar} =  |  Get Stored Variable  |  TheVariableName | identifier_name=E2E test 1 | before=${dayAgo} | after=${weekAgo}
             
-            -- This retrieves the latest stored variable with name TheVariableName and test id "E2E test 1" that was stored between 1 and 7 days earlier
+            -- This retrieves the latest stored variable with name TheVariableName and additional identifier "E2E test 1" that was stored between 1 and 7 days ago
             
             
             """    
@@ -215,38 +190,28 @@ class StorageLibrary:
             if variable_name is None:
                 raise Exception("Variable name was missing, it is a mandatory argument")
 
-            # query based on variableName and optional environment, testSet and testId
+            # query based on variableName and optional identifier
             args = [variable_name]
             query = "SELECT Content FROM REMOTEDATA WHERE variableName = ? "
-            if environment is not None:
-                query = query + "AND environment = ? "
-                args.append(environment)
-            if test_set is not None:
-                query = query + "AND testSet = ? "
-                args.append(test_set)
-            if test_id is not None:
-                query = query + "AND testId = ? "
-                args.append(test_id)
+            if identifier_name:
+                print("Adding identifier")
+                query = query + "AND identifierName = ? "
+                args.append(identifier_name)
             
             # date range to use
-            query = query + "AND testDate = (SELECT MAX(testDate) FROM REMOTEDATA  WHERE variableName = ? "
+            query = query + "AND dataDate = (SELECT MAX(dataDate) FROM REMOTEDATA  WHERE variableName = ? "
             args.append(variable_name)
             if after is not None:
-                query = query + "AND testDate > ? "
+                query = query + "AND dataDate >= ? "
                 args.append(after)
             if before is not None:
-                query = query + "AND testDate < ? "
+                query = query + "AND dataDate <= ? "
                 args.append(before)
             # add the where conditions to the date select
-            if environment is not None:
-                query = query + "AND environment = ? "
-                args.append(environment)
-            if test_set is not None:
-                query = query + "AND testSet = ? "
-                args.append(test_set)
-            if test_id is not None:
-                query = query + "AND testId = ? "
-                args.append(test_id)
+            if identifier_name:
+                print("Adding identifier")
+                query = query + "AND identifierName = ? "
+                args.append(identifier_name)
                 
             query = query + ");"            
             cur.execute(query,tuple(args))
@@ -263,5 +228,6 @@ class StorageLibrary:
                     return None                
             return(data)
 
-    retrieve_latest.robot_name = "Get Remote Variable"
-    store.robot_name = "Set Remote Variable"
+    retrieve_latest.robot_name = "Get Stored Variable"
+    store.robot_name = "Set Stored Variable"
+    storagetimestamp.robot_name = "Get Storage Timestamp"
